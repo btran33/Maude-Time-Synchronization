@@ -1,0 +1,68 @@
+--- Cristian Algorithm, featuring a simple 1-client, 1-server model
+--- with 1 round-trip time message to consider
+
+load  real-time-maude.maude   
+
+(tomod CRISTIAN is
+
+  class Client | LocalClock : Time, RTT : Time .
+  class Server | LocalClock : Time .
+
+  msg request : -> Msg .
+  msg timeRequest : Time -> Msg .
+  msg timeAck : Time Time -> Msg .
+
+  var OID : Oid .    vars T T' S S' : Time .
+  
+  --- Client start protocol by sending a timeRequest message with current clock value:
+  rl [rttRequest] :
+     request  < OID : Client | LocalClock : T >  =>  < OID : Client | >  timeRequest(T) .
+
+  --- Server read timeRequest message & respond with timeAck message:
+  rl [rttResponse] :
+     timeRequest(T)  < OID : Server | LocalClock : S >  =>  < OID : Server | >  timeAck(T, S) .
+
+  --- Client react to the response, and deduce the round trip time for this round:
+  rl [rttRespReact] :
+     timeAck(T, S)  < OID : Client | LocalClock : T' >  =>  < OID : Client | RTT : (T' monus T) plus S > .
+
+  --- Tick rule, where time may elapse even if there are messages in the system:
+  rl [tick1] :
+     {< OID : Client | LocalClock : T >  REST:Configuration}  =>
+     {< OID : Client | LocalClock : T plus T' >  REST:Configuration} in time T' [nonexec] .
+
+  rl [tick2] :
+     {< OID : Server | LocalClock : S >  REST:Configuration}  =>
+     {< OID : Server | LocalClock : S plus S' >  REST:Configuration} in time S' [nonexec] .
+
+endtom)
+
+
+--- Now, the following module instantiates the object names and 
+--- the time domain, and defines an initial state:
+
+(tomod DISCRETE-CRISTIAN is
+  including NAT-TIME-DOMAIN .
+  including CRISTIAN .
+
+  ops client server : -> Oid [ctor] .
+
+  op initState : -> GlobalSystem .
+  eq initState = {request 
+                  < client : Client | LocalClock : 0, RTT : 0 >  
+                  < server : Server | LocalClock : 0 >} .
+endtom)
+
+
+(set tick def 1 .)
+
+--- Timed rewriting until time 100:
+--- (tfrew initState in time <= 100 .)
+
+--- Is it possible to reach a state where the recorded rtt value is 0,
+--- i.e., the sending of each message took zero time?
+*** (tsearch [1] initState =>* {< client : Client | RTT : 0 > < server : Server | >} in time < 12 .)
+
+
+--- Is it possible, in time <= 12, to record an rtt value 2?
+*** (tsearch [1] initState =>* {REST:Configuration < client : Client | RTT : 2 >} in time <= 12 .)
