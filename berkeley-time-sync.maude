@@ -1,0 +1,361 @@
+--- Berkeley Algorithm, featuring 1-server, multi-client model
+--- with timeout and message delays
+
+--- Constraints: no periodic poll, and offset between client and 
+--- averaged time must be non-negative due to Time being monotonically increasing
+
+--- With multiple clients, a server will need to know the rtt of all
+--- its clients to compute each client's offset
+
+--- To ensure resend of request after 100 ms., server would need a 
+--- dynamic number of timers. This makes the system more complex & interesting
+
+load real-time-maude.maude
+
+(tomod DATA-TYPES is
+  protecting NAT-TIME-DOMAIN .     --- needed for the value 0
+
+  --- Need a data type for lists of Oid's to store the list of clients:
+
+  sort OidSet .
+  subsort Oid < OidSet .
+
+  op none : -> OidSet [ctor] .
+  op _;_ : OidSet OidSet -> OidSet [ctor assoc comm id: none] .
+
+  --- Need a datatype to store each client's time value on server for two purposes: 
+  --- 1. for each "pending" rtt request on server, we need a timer value
+  --- 2. to store the rtt time value for computation
+  --- These two data types are the same, but to make
+  --- the spec more readable, we still give them different names ...
+
+  sorts Timer Timers .
+  subsort Timer < Timers .
+
+  op timer : Oid Time -> Timer [ctor] .
+  op noTimer : -> Timers [ctor] .
+  op _;_ : Timers Timers -> Timers [ctor assoc comm id: noTimer] .
+
+  var T : Time .
+  var OID : Oid .
+  var OSet : OidSet .
+
+  op initializeTimers : OidSet Time -> Timers .
+  eq initializeTimers(none, T) = noTimer .
+  eq initializeTimers(OID ; OSet, T) = timer(OID, T) ; initializeTimers(OSet, T) .
+
+  --- Finally, we need to store (oid , rtt values, client est. clock)
+  --- This data type is isomorphic with "ClientTimers":
+
+  sort RttValue RttValues .
+  subsort RttValue < RttValues .
+  op rttValue : Oid Time Time -> RttValue [ctor] .
+  op noValue : -> RttValues [ctor] .
+  op _;_ : RttValues RttValues -> RttValues [ctor assoc comm id: noValue] .
+
+  --- Length operator on available RTTs on the server,
+  --- which will serve as indication to when it can calculate
+  --- the average time of all nodes in Berkeley
+  
+  var RTTs : RttValues .
+  var RTT : RttValue .
+
+  op len : RttValues -> Time .
+  eq len(noValue) = 0 .
+  eq len(RTT ; RTTs) = 1 plus len(RTTs) .
+  
+endtom)
+
+
+
+
+(tomod MSGS is
+  including DATA-TYPES .
+  
+  --- The messages should now be equipped with a receiver and sender
+  --- field so that objects know who are sending stuff ...
+  --- We follow Maude's "convention" of having the receiver of the message
+  --- as the first argument ...
+  
+  --- msgs timeRequest timeAck : Oid Oid Time -> Msg .
+  --- msg request : Oid -> Msg .
+
+  msg request : Oid -> Msg .
+  msg timeRequest : Oid Oid Time -> Msg .
+  msg timeAck : Oid Oid Time Time -> Msg .
+
+  sort DelayMsg .
+  subsorts Msg < DelayMsg < NEMsgConfiguration .
+  --- The delay operators (wrapper) on messages:
+  op delay : Msg Time -> DelayMsg [ctor right id: 0] .
+
+  --- Start a multiDelayRequest message to a group of clients, "dissolves" 
+  --- into a set of constructed single delayed messages to each client 
+  --- usage: multiDelayRequest(client_group, server, server_clock_value, min_trans_delay)
+  msg multiDelayRequest : OidSet Oid Time Time -> Configuration .
+
+  vars OClient OServer : Oid .  var OSet : OidSet .  vars S DLY : Time .
+
+  eq multiDelayRequest(none, OServer, S, DLY) = none .
+  eq multiDelayRequest(OClient ; OSet, OServer, S, DLY) = 
+        delay(timeRequest(OClient, OServer, S), DLY) multiDelayRequest(OSet, OServer, S, DLY) .
+endtom)
+
+
+(tomod BERKELEY is
+  including MSGS .
+  including NAT-TIME-DOMAIN-WITH-INF .  --- Inf OK for mte and delta
+
+  ops TIMEOUT MIN-DELAY : -> Time .   
+
+  class Server | LocalClock : Time, 
+                 Clients : OidSet, 
+                 LocalTimers : Timers, 
+                 rttValues : RttValues .
+
+  class Client | LocalClock : Time .
+
+  vars OClient OServer : Oid .
+  var OSet : OidSet .
+  vars T T' T'' C : Time .
+  var TIMERS : Timers . 
+  var RTTVALS : RttValues .
+
+  --- Start: send a timeRequest message, with approrpiate min-delay, 
+  --- to all clients and initialize timeout on all timers
+  rl [rttRequest] : 
+     request(OServer)
+     < OServer : Server | Clients : OSet, LocalClock : T, LocalTimers : TIMERS > 
+      => 
+        < OServer : Server | LocalTimers : TIMERS ; initializeTimers(OSet, TIMEOUT) >
+          multiDelayRequest(OSet, OServer, T, MIN-DELAY) .
+
+  --- Client read timeRequest and acknowledge with a delayed ack
+  rl [rttAck] :
+     timeRequest(OClient, OServer, T)  
+     < OClient : Client | LocalClock : C >
+      => 
+        < OClient : Node | >  delay(timeAck(OServer, OClient, T, C), MIN-DELAY) .
+
+  --- Reception of an ack within time TIMEOUT
+  --- record RTT and estimate client clock's time:
+  crl [rttAckReact] :
+      timeAck(OServer, OClient, T, C)
+      < OServer : Server | LocalClock : T', rttValues : RTTVALS, 
+                           LocalTimers : TIMERS ; timer(OClient, T'') >
+       =>
+         < OServer : Server | rttValues : RTTVALS ; rttValue(OClient, 
+                                                             T' monus T, 
+                                                             C plus ((T' monus T) div 2)),
+                              LocalTimers : TIMERS > 
+      if T' monus T < TIMEOUT .
+
+  --- Reception of an too old message which is just discard:
+  crl [discardOldRttAck] :
+      timeAck(OServer, OClient, T, C)  < OServer : Server | LocalClock : T' >  
+       =>  
+        < OServer : Server | > 
+      if T' monus T >= TIMEOUT .
+
+  --- Resend a timeRequest to OClient when when the timer 
+  --- for OClient expires & reset the timer to TIMEOUT:
+  rl [resendRttRequest] :
+     < OServer : Server | LocalClock : T, LocalTimers : TIMERS ; timer(OClient, 0) >
+      =>
+        < OServer : Server | LocalTimers : TIMERS ; timer(OClient, TIMEOUT) >
+        delay(timeRequest(OClient, OServer, T), MIN-DELAY) .
+
+  --- Now, the tick rule must
+  ---   increase all clocks (client and server)
+  ---   decrease all timers (server)
+  ---   decrease the remaining delay-time for delay-messages
+  ---   with the elapse of time
+  --- AND must not advance time beyond the first point in time 
+  ---   where one of the timer could expire:
+  crl [tick] : {C:Configuration}  =>  
+                  {delta(C:Configuration, R)} in time T 
+               if T <= mte(C:Configuration) [nonexec] . --- MTE used as bound for tick
+     
+  --- Delta models the effect of time elapse on a system
+  op delta : Configuration Time -> Configuration [frozen (1)] .
+  eq delta(none, T) = none .
+  eq delta(NeC:NEConfiguration NeC':NEConfiguration, T) =
+       delta(NeC:NEConfiguration, T) delta(NeC':NEConfiguration, T) .
+
+  eq delta(< OServer : Server | LocalClock : T, LocalTimers : TIMERS >, T') =
+        < OServer : Server | LocalClock : T + T',  LocalTimers : delta(TIMERS, T') > .
+
+  eq delta(< OClient : Client | LocalClock : C >, T) =
+        < OClient : Client | LocalClock : C + T >
+        
+  eq delta(delay(M:Msg, T), T') = delay(M:Msg, T monus T') .
+
+  op delta : Timers Time -> Timers .
+  eq delta(noTimer, T') = noTimer .
+  eq delta(timer(OClient, T) ; TIMERS, T') = 
+       timer(OClient, T monus T') ; delta(TIMERS, T') .
+
+  --- MTE (maximal time elapse) finds the "next" time some instantaneous rule must be applied
+  op mte : Configuration -> TimeInf [frozen (1)] .
+  eq mte(none) = INF .
+  eq mte(NeC:NEConfiguration NeC':NEConfiguration) =
+       min(mte(NeC:NEConfiguration), mte(NeC':NEConfiguration)) .
+       
+  eq mte(< OServer : Server | LocalTimers : TIMERS >) = mte(TIMERS) .
+  eq mte(DM:DelayMsg) = INF .       --- no stopping necessary when message ripe!
+
+  op mte : Timers -> TimeInf .
+  eq mte(noTimer) = INF .
+  eq mte(timer(OClient, T) ; TIMERS) = min(T, mte(TIMERS)) .
+
+endtom)
+
+
+--- The following module defines an initial state with four nodes
+--- and defines some values for TIMEOUT and MIN-DELAY:
+
+(tomod TEST-MANY-RTTS is including MANY-RTTS .
+  ops n1 n2 n3 n4 : -> Oid [ctor] .  --- Names of nodes:
+
+  eq TIMEOUT = 4 .    eq MIN-DELAY = 1 .
+
+  op initState : -> GlobalSystem .
+  eq initState =
+      {findRtt(n2)
+       findRtt(n4)
+       < n1 : Node | clock : 0,
+                     nbs : n2 ; n3 ; n4,
+                     resendTimers : noTimer,
+                     rttValues : noValue >
+       < n2 : Node | clock : 0,
+                     nbs : n1,
+                     resendTimers : noTimer,
+                     rttValues : noValue >
+       < n3 : Node | clock : 0,
+                     nbs : n1 ; n4,
+                     resendTimers : noTimer,
+                     rttValues : noValue >
+       < n4 : Node | clock : 0,
+                     nbs : n1 ; n3,
+                     resendTimers : noTimer,
+                     rttValues : noValue >} .
+endtom)
+
+--- (tfrew initState in time < 100 .)
+
+--- search for bad state, where a rtt value outside of
+--- desired range is found:
+
+
+*** search for BAD rtt values:
+***(tsearch [1] initState =>* 
+               {C:Configuration 
+                < O:Oid : Node | rttValues : RTTVALS:RttValues ; 
+                                             rttValue(O':Oid, RTTVAL:Time) >}
+                  such that RTTVAL:Time < (2 * MIN-DELAY)  
+                            or RTTVAL:Time >= TIMEOUT
+                     in time <= 7 .)
+
+
+--- The following module defines some propositions for use in temporal logic
+--- model checking as explained in the manual:
+
+--- (tomod MODEL-CHECK-MANY-RTTS is
+---   including TIMED-MODEL-CHECKER .
+---   protecting MANY-RTTS .
+
+---   --- Any rtt value greater than TIMEOUT?
+---   op badRttValue : -> Prop [ctor] .
+
+---   var REST : Configuration .
+---   vars O O' : Oid .
+---   vars R R' R'' : Time .
+---   var RTT-VALS : RttValues .
+
+---   ceq {REST  < O : Node | rttValues : rttValue(O', R) ; RTT-VALS >}
+---         |=
+---       badRttValue = true if  R >= TIMEOUT or R < 2 * MIN-DELAY . 
+
+---   ops rttFound currentMsgExchange : Oid Oid -> Prop [ctor] .
+  
+---   eq {REST  < O : Node | rttValues : rttValue(O', R) ; RTT-VALS >}
+---         |=
+---      rttFound(O, O') = true .
+
+---   ceq {REST  rtt?(O', O, R)} in time R'
+---         |=
+---       currentMsgExchange(O, O') = true  if R + TIMEOUT > R' .
+
+---   ceq {REST  rttAck(O, O', R)} in time R'
+---         |=
+---       currentMsgExchange(O, O') = true  if R + TIMEOUT > R' .
+
+
+---   op findMsgExists : Oid -> Prop [ctor] .
+
+---   eq {REST findRtt(O)}
+---         |=
+---      findMsgExists(O) = true .
+
+---   --- Superfluous message present somewhere in the system?
+---   op superfluousMsg : -> Prop [ctor] .
+
+---   ceq {< O : Node | rttValues : rttValue(O', R) ; RTT-VALS >   
+---        rtt?(O', O, R')
+---        REST}  in time R'' 
+---         |= 
+---       superfluousMsg  = true   if R' + TIMEOUT > R'' .
+
+---   ceq {< O : Node | rttValues : rttValue(O', R) ; RTT-VALS >   
+---        rttAck(O, O', R')
+---        REST}  in time R'' 
+---         |= 
+---       superfluousMsg  = true   if R' + TIMEOUT > R'' .
+
+
+---   op rttValueIs : Oid Oid Time -> Prop [ctor] .
+
+---   ceq {REST  < O : Node | rttValues : rttValue(O', R) ; RTT-VALS >}
+---         |=
+---       rttValueIs(O,O', R)  = true   if  not O' in RTT-VALS .
+
+---   op _in_ : Oid RttValues -> Bool .
+---   eq O in noValue = false .
+---   eq O in rttValue(O', R) ; RTT-VALS = (O == O') or O in RTT-VALS .
+--- endtom)
+
+
+
+--- Also take the initial state into account when model checking:
+
+--- (tomod MODEL-CHECK-TEST-MANY-RTTS is
+---   protecting TEST-MANY-RTTS .
+---   including MODEL-CHECK-MANY-RTTS .
+--- endtom)
+
+
+--- No too large rtt values are ever stored. Due to the high degree of 
+--- nondeterminism, it can only be checked up to time 9 on my machine.
+--- The constant TIMEOUT should be redefined to 4 before 
+--- executing the following spec:
+
+---(mc initState |=t [] ~ badRttValue in time <= 9 .)
+
+--- if there is no findRtt msg for n4, then either there is a recorded
+--- rtt value for the pair n4, n3, or there is a current message exchange
+--- going on to find such an rtt value:
+
+***(mc initState |=t
+      (~ findMsgExists(n4)) => 
+         [] (rttFound(n4, n3) \/ currentMsgExchange(n4, n3))
+      in time <= 9 .)
+
+--- there is no superfluous message in the system:
+
+***(mc initState |=t [] ~ superfluousMsg in time <= 9 .)
+
+--- stability of rtt values: once the rtt from n4 to n3 is found to be 
+--- 2, then it will remain 2:
+
+***(mc initState |=t rttValueIs(n4, n3, 2) => [] rttValueIs(n4, n3, 2)
+      in time <= 9 .)
