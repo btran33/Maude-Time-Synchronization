@@ -36,8 +36,9 @@ load  real-time-maude.maude
 ---      {< OID : Client | LocalClock : T >  REST:Configuration}  =>
 ---      {< OID : Client | LocalClock : T plus T' >  REST:Configuration} in time T' [nonexec] .
 
+  --- Delta models the effect of time elapse on a system
   rl [tick] : {C:Configuration}  =>  
-               {delta(C:Configuration, T')} in time T'[nonexec] .
+               {delta(C:Configuration, T')} in time T' [nonexec] .
    
   op delta : Configuration Time -> Configuration [frozen (1)] .
   eq delta(none, T') = none .
@@ -75,9 +76,9 @@ endtom)
 --- Timed rewriting until time 3:
 *** (tfrew initState in time <= 3 .)
 
---- Is it possible to reach a state where the local clock is 3, after receiving ack
+--- Is it possible to reach a state where the local clock is 3
 *** (tsearch [1] initState =>* {< client : Client | LocalClock : 3 > < server : Server | >} in time < 12 .)
 
 --- Is it possible to reach a state where the local clock is 4,
---- i.e., the sending of each message took zero time?
-*** (tsearch [1] initState =>* {REST:Configuration < client : Client | LocalClock : 4 >} in time < 12 .)
+--- and the sending of each message took zero time?
+*** (tsearch [1] initState =>* {REST:Configuration < client : Client | LocalClock : 4 >} in time <= 0 .)

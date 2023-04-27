@@ -46,11 +46,43 @@ load real-time-maude.maude
       =>  < OID : Client | LocalTimer : TIMEOUT >  timeRequest(T) .
      
   --- Normal tick rule, but time cannot advance when Timer expires:
-  crl [tick] :
-     {< OID : Client | LocalClock : T, LocalTimer : TI > REST:Configuration} =>
-     {< OID : Client | LocalClock : T plus T', LocalTimer : TI monus T' > REST:Configuration}
-      in time T' 
-      if T' <= TI [nonexec] .
+---   crl [tick] :
+---      {< OID : Client | LocalClock : T, LocalTimer : TI > REST:Configuration} =>
+---      {< OID : Client | LocalClock : T plus T', LocalTimer : TI monus T' > REST:Configuration}
+---       in time T' 
+---       if T' <= TI [nonexec] .
+
+  --- Now, the tick rule must
+  ---   increase all clocks (client and server)
+  ---   decrease all timers (client)
+  ---   must not advance time when client timer expires 
+  crl [tick] : {C:Configuration}  =>  
+               {delta(C:Configuration, T')} in time T'
+               if T' <= mte(C:Configuration) [nonexec] . --- MTE used as bound for tick
+   
+  --- Delta models the effect of time elapse on a system
+  op delta : Configuration Time -> Configuration [frozen (1)] .
+  eq delta(none, T') = none .
+  eq delta(NeC:NEConfiguration NeC':NEConfiguration, T') =
+       delta(NeC:NEConfiguration, T') delta(NeC':NEConfiguration, T') .
+
+  eq delta(< OID : Client | LocalClock : T, LocalTimer : TI > , T') =
+        < OID : Client | LocalClock : T plus T', LocalTimer : TI monus T' > .
+
+  eq delta(< OID : Server | LocalClock : T > , T') =
+        < OID : Server | LocalClock : T plus T' >  .
+
+  eq delta(M:Msg, T') = M:Msg .
+
+  --- MTE (maximal time elapse) finds the "next" time some instantaneous rule must be applied
+  op mte : Configuration -> TimeInf [frozen (1)] .
+  eq mte(none) = INF .
+  eq mte(NeC:NEConfiguration NeC':NEConfiguration) =
+       min(mte(NeC:NEConfiguration), mte(NeC':NEConfiguration)) .
+
+  eq mte(M:Msg) = INF .                               --- msgs have no timeout limit
+  eq mte(< OID : Client | LocalTimer : TI >) = TI .   --- client will always have a timeout TI
+  eq mte(< OID : Server | LocalClock : T >) = INF .   --- treat server with no timeout limit
 
 endtom)
 
@@ -75,5 +107,5 @@ endtom)
 --- Rewrite in time <= 2 (request and ack):
 *** (tfrew initState in time <= 2 .)
 
---- We should be able to have a local clock = 5 where t > 2, assuming tick time is 1:
-***(tsearch [1] initState =>* {<  client : Client | LocalClock : 5 > REST:Configuration} in time > 2 .)
+--- We should be able to have a local clock = 5 where t > 2 and ack hasn't arrive:
+*** (tsearch [1] initState =>* {<  client : Client | LocalClock : 5, LocalTimer : 5 > REST:Configuration} in time > 2 .)
