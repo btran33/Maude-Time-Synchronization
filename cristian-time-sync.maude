@@ -25,6 +25,7 @@ load  real-time-maude.maude
 
   --- Client react to the ack, and deduce the round trip time for this round
   --- Set client's local time T_c = T_s + (RTT / 2)
+  --- _div_ operator manually specified in RTM
   rl [rttAckReact] :
      timeAck(T, S)  < OID : Client | LocalClock : T' >  =>  < OID : Client | LocalClock : S plus ((T' monus T) div 2) > .
 
