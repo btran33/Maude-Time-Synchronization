@@ -4,6 +4,7 @@
 load  real-time-maude.maude
 
 (tomod CRISTIAN is
+  including NAT-TIME-DOMAIN .
 
   class Client | LocalClock : Time .
   class Server | LocalClock : Time .
@@ -31,9 +32,25 @@ load  real-time-maude.maude
      timeAck(T, S)  < OID : Client | LocalClock : T' >  =>  < OID : Client | LocalClock : S plus ((T' monus T) div TWO) > .
 
   --- Tick rule, where time may elapse even if there are messages in the system:
-  rl [tick] :
-     {< OID : Client | LocalClock : T >  REST:Configuration}  =>
-     {< OID : Client | LocalClock : T plus T' >  REST:Configuration} in time T' [nonexec] .
+---   rl [tick] :
+---      {< OID : Client | LocalClock : T >  REST:Configuration}  =>
+---      {< OID : Client | LocalClock : T plus T' >  REST:Configuration} in time T' [nonexec] .
+
+  rl [tick] : {C:Configuration}  =>  
+               {delta(C:Configuration, T')} in time T'[nonexec] .
+   
+  op delta : Configuration Time -> Configuration [frozen (1)] .
+  eq delta(none, T') = none .
+  eq delta(NeC:NEConfiguration NeC':NEConfiguration, T') =
+       delta(NeC:NEConfiguration, T') delta(NeC':NEConfiguration, T') .
+
+  eq delta(< OID : Client | LocalClock : T > , T') =
+        < OID : Client | LocalClock : T plus T' > .
+
+  eq delta(< OID : Server | LocalClock : T > , T') =
+        < OID : Server | LocalClock : T plus T' >  .
+
+  eq delta(M:Msg, T') = M:Msg .
 
 endtom)
 
@@ -41,7 +58,6 @@ endtom)
 --- Instantiates the object names and the time domain, and defines an initial state:
 
 (tomod DISCRETE-CRISTIAN is
-  including NAT-TIME-DOMAIN .
   including CRISTIAN .
 
   eq TWO = 2 .
@@ -53,18 +69,6 @@ endtom)
                   < server : Server | LocalClock : 4 >} .
 endtom)
 
---- (tomod DENSE-CRISTIAN is
----   including POSRAT-TIME-DOMAIN .
----   including CRISTIAN .
-
----   eq TWO = 2 .
----   ops client server : -> Oid [ctor] .
-
----   op initState : -> GlobalSystem .
----   eq initState = {request 
----                   < client : Client | LocalClock : 0 >  
----                   < server : Server | LocalClock : 4 >} .
---- endtom)
 
 (set tick def 1 .)
 
