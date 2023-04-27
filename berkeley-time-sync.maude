@@ -135,7 +135,7 @@ endtom)
      timeRequest(OClient, OServer, T)  
      < OClient : Client | LocalClock : C >
       => 
-        < OClient : Node | >  delay(timeAck(OServer, OClient, T, C), MIN-DELAY) .
+        < OClient : Client | >  delay(timeAck(OServer, OClient, T, C), MIN-DELAY) .
 
   --- Reception of an ack within time TIMEOUT
   --- record RTT and estimate client clock's time:
@@ -173,7 +173,7 @@ endtom)
   --- AND must not advance time beyond the first point in time 
   ---   where one of the timer could expire:
   crl [tick] : {C:Configuration}  =>  
-                  {delta(C:Configuration, R)} in time T 
+                  {delta(C:Configuration, T)} in time T 
                if T <= mte(C:Configuration) [nonexec] . --- MTE used as bound for tick
      
   --- Delta models the effect of time elapse on a system
@@ -186,7 +186,7 @@ endtom)
         < OServer : Server | LocalClock : T + T',  LocalTimers : delta(TIMERS, T') > .
 
   eq delta(< OClient : Client | LocalClock : C >, T) =
-        < OClient : Client | LocalClock : C + T >
+        < OClient : Client | LocalClock : C + T > .
         
   eq delta(delay(M:Msg, T), T') = delay(M:Msg, T monus T') .
 
@@ -202,6 +202,7 @@ endtom)
        min(mte(NeC:NEConfiguration), mte(NeC':NEConfiguration)) .
        
   eq mte(< OServer : Server | LocalTimers : TIMERS >) = mte(TIMERS) .
+  eq mte(< OClient : Client | >) = INF .
   eq mte(DM:DelayMsg) = INF .       --- no stopping necessary when message ripe!
 
   op mte : Timers -> TimeInf .
@@ -214,31 +215,21 @@ endtom)
 --- The following module defines an initial state with four nodes
 --- and defines some values for TIMEOUT and MIN-DELAY:
 
-(tomod TEST-MANY-RTTS is including MANY-RTTS .
-  ops n1 n2 n3 n4 : -> Oid [ctor] .  --- Names of nodes:
+(tomod DISCRETE-BERKELEY is including BERKELEY .
+  ops server c1 c2 c3 : -> Oid [ctor] .  --- Names
 
   eq TIMEOUT = 4 .    eq MIN-DELAY = 1 .
 
   op initState : -> GlobalSystem .
   eq initState =
-      {findRtt(n2)
-       findRtt(n4)
-       < n1 : Node | clock : 0,
-                     nbs : n2 ; n3 ; n4,
-                     resendTimers : noTimer,
-                     rttValues : noValue >
-       < n2 : Node | clock : 0,
-                     nbs : n1,
-                     resendTimers : noTimer,
-                     rttValues : noValue >
-       < n3 : Node | clock : 0,
-                     nbs : n1 ; n4,
-                     resendTimers : noTimer,
-                     rttValues : noValue >
-       < n4 : Node | clock : 0,
-                     nbs : n1 ; n3,
-                     resendTimers : noTimer,
-                     rttValues : noValue >} .
+      {request(server)
+       < server : Server | LocalClock : 5,
+                           Clients : c1 ; c2 ; c3,
+                           LocalTimers : noTimer,
+                           rttValues : noValue >
+       < c1 : Client | LocalClock : 2 >
+       < c2 : Client | LocalClock : 3 >
+       < c3 : Client | LocalClock : 1 >} .
 endtom)
 
 --- (tfrew initState in time < 100 .)
