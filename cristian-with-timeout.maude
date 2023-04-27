@@ -9,7 +9,7 @@ load real-time-maude.maude
 (tomod CRISTIAN-WITH-TIMEOUT is
   protecting NAT-TIME-DOMAIN-WITH-INF .
 
-  ops TIMEOUT, TWO : -> Time .
+  ops TIMEOUT : -> Time .
 
   class Client | LocalClock : Time, LocalTimer : TimeInf .
   class Server | LocalClock : Time .
@@ -32,7 +32,7 @@ load real-time-maude.maude
   --- Client react to the ack within TIMEOUT. Set client's local time and turn off resendTimer:
   crl [rttAckReact] :
      timeAck(T, S)  < OID : Client | LocalClock : T' >  
-      =>  < OID : Client | LocalClock : S plus ((T' monus T) div TWO), LocalTimer : INF > 
+      =>  < OID : Client | LocalClock : S plus ((T' monus T) div 2), LocalTimer : INF > 
       if (T' monus T) < TIMEOUT . 
 
   --- Client read and discard old ack (old being T' - T >= TIMEOUT):
@@ -91,7 +91,6 @@ endtom)
    including CRISTIAN-WITH-TIMEOUT .
 
    eq TIMEOUT = 10 .
-   eq TWO = 2 .
    ops client server : -> Oid [ctor] .
 
    op initState : -> GlobalSystem .

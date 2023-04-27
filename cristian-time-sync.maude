@@ -9,9 +9,6 @@ load  real-time-maude.maude
   class Client | LocalClock : Time .
   class Server | LocalClock : Time .
 
-  --- Time used for division 
-  op TWO : -> Time .
-
   msg request : -> Msg .
   msg timeRequest : Time -> Msg .
   msg timeAck : Time Time -> Msg .
@@ -29,7 +26,7 @@ load  real-time-maude.maude
   --- Client react to the ack, and deduce the round trip time for this round
   --- Set client's local time T_c = T_s + (RTT / 2)
   rl [rttAckReact] :
-     timeAck(T, S)  < OID : Client | LocalClock : T' >  =>  < OID : Client | LocalClock : S plus ((T' monus T) div TWO) > .
+     timeAck(T, S)  < OID : Client | LocalClock : T' >  =>  < OID : Client | LocalClock : S plus ((T' monus T) div 2) > .
 
   --- Tick rule, where time may elapse even if there are messages in the system:
 ---   rl [tick] :
@@ -61,7 +58,6 @@ endtom)
 (tomod DISCRETE-CRISTIAN is
   including CRISTIAN .
 
-  eq TWO = 2 .
   ops client server : -> Oid [ctor] .
 
   op initState : -> GlobalSystem .
