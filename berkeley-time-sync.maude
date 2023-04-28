@@ -169,40 +169,71 @@ endtom)
   ---   increase all clocks (client and server)
   ---   decrease all timers (server)
   ---   decrease the remaining delay-time for delay-messages
-  ---   with the elapse of time
   --- AND must not advance time beyond the first point in time 
   ---   where one of the timer could expire:
   crl [tick] : {C:Configuration}  =>  
-                  {delta(C:Configuration, T)} in time T 
-               if T <= mte(C:Configuration) [nonexec] . --- MTE used as bound for tick
+               {delta(C:Configuration, T')} in time T'
+               if T' <= mte(C:Configuration) [nonexec] . --- MTE used as bound for tick
      
   --- Delta models the effect of time elapse on a system
+  --- op delta : Configuration Time -> Configuration [frozen (1)] .
+  --- eq delta(none, T') = none .
+  --- eq delta(NeC:NEConfiguration NeC':NEConfiguration, T') =
+  ---      delta(NeC:NEConfiguration, T') delta(NeC':NEConfiguration, T') .
+
+  --- eq delta(< OServer : Server | LocalClock : T, LocalTimers : TIMERS >, T') =
+  ---       < OServer : Server | LocalClock : T plus T',  LocalTimers : delta(TIMERS, T') > .
+
+  --- eq delta(< OClient : Client | LocalClock : T >, T') =
+  ---       < OClient : Client | LocalClock : T plus T' > .
+        
+  --- eq delta(delay(M:Msg, T), T') = delay(M:Msg, T monus T') .
+  --- eq delta(M:Msg, T') = M:Msg . 
+
+  --- op delta : Timers Time -> Timers .
+  --- eq delta(noTimer, T') = noTimer .
+  --- eq delta(timer(OClient, T) ; TIMERS, T') = 
+  ---      timer(OClient, T monus T') ; delta(TIMERS, T') .
+
+  --- --- MTE (maximal time elapse) finds the "next" time some instantaneous rule must be applied
+  --- op mte : Configuration -> TimeInf [frozen (1)] .
+  --- eq mte(none) = INF .
+  --- eq mte(NeC:NEConfiguration NeC':NEConfiguration) =
+  ---      min(mte(NeC:NEConfiguration), mte(NeC':NEConfiguration)) .
+       
+  --- eq mte(< OServer : Server | LocalTimers : TIMERS >) = mte(TIMERS) .
+  --- eq mte(< OClient : Client | >) = INF .
+  
+  --- eq mte(DM:DelayMsg) = INF .       --- no stopping necessary when message ripe!
+  --- eq mte(M:Msg) = INF .
+
+  --- op mte : Timers -> TimeInf .
+  --- eq mte(noTimer) = INF .
+  --- eq mte(timer(OClient, T) ; TIMERS) = min(T, mte(TIMERS)) .
+
   op delta : Configuration Time -> Configuration [frozen (1)] .
   eq delta(none, T) = none .
   eq delta(NeC:NEConfiguration NeC':NEConfiguration, T) =
        delta(NeC:NEConfiguration, T) delta(NeC':NEConfiguration, T) .
-
   eq delta(< OServer : Server | LocalClock : T, LocalTimers : TIMERS >, T') =
         < OServer : Server | LocalClock : T + T',  LocalTimers : delta(TIMERS, T') > .
+  eq delta(< OClient : Client | LocalClock : T >, T') =
+        < OClient : Client | LocalClock : T plus T' > .
 
-  eq delta(< OClient : Client | LocalClock : C >, T) =
-        < OClient : Client | LocalClock : C + T > .
-        
   eq delta(delay(M:Msg, T), T') = delay(M:Msg, T monus T') .
 
   op delta : Timers Time -> Timers .
-  eq delta(noTimer, T') = noTimer .
+  eq delta(noTimer, T) = noTimer .
   eq delta(timer(OClient, T) ; TIMERS, T') = 
        timer(OClient, T monus T') ; delta(TIMERS, T') .
 
-  --- MTE (maximal time elapse) finds the "next" time some instantaneous rule must be applied
   op mte : Configuration -> TimeInf [frozen (1)] .
   eq mte(none) = INF .
   eq mte(NeC:NEConfiguration NeC':NEConfiguration) =
        min(mte(NeC:NEConfiguration), mte(NeC':NEConfiguration)) .
-       
-  eq mte(< OServer : Server | LocalTimers : TIMERS >) = mte(TIMERS) .
-  eq mte(< OClient : Client | >) = INF .
+  eq mte(< OServer : Server | LocalClock : T, LocalTimers : TIMERS >) = mte(TIMERS) .
+  eq mte(< OClient : Client | LocalClock : T >) = INF .
+
   eq mte(DM:DelayMsg) = INF .       --- no stopping necessary when message ripe!
 
   op mte : Timers -> TimeInf .
@@ -232,7 +263,7 @@ endtom)
        < c3 : Client | LocalClock : 1 >} .
 endtom)
 
---- (tfrew initState in time < 100 .)
+--- (tfrew initState in time < 10 .)
 
 --- search for bad state, where a rtt value outside of
 --- desired range is found:
@@ -248,105 +279,3 @@ endtom)
                      in time <= 7 .)
 
 
---- The following module defines some propositions for use in temporal logic
---- model checking as explained in the manual:
-
---- (tomod MODEL-CHECK-MANY-RTTS is
----   including TIMED-MODEL-CHECKER .
----   protecting MANY-RTTS .
-
----   --- Any rtt value greater than TIMEOUT?
----   op badRttValue : -> Prop [ctor] .
-
----   var REST : Configuration .
----   vars O O' : Oid .
----   vars R R' R'' : Time .
----   var RTT-VALS : RttValues .
-
----   ceq {REST  < O : Node | rttValues : rttValue(O', R) ; RTT-VALS >}
----         |=
----       badRttValue = true if  R >= TIMEOUT or R < 2 * MIN-DELAY . 
-
----   ops rttFound currentMsgExchange : Oid Oid -> Prop [ctor] .
-  
----   eq {REST  < O : Node | rttValues : rttValue(O', R) ; RTT-VALS >}
----         |=
----      rttFound(O, O') = true .
-
----   ceq {REST  rtt?(O', O, R)} in time R'
----         |=
----       currentMsgExchange(O, O') = true  if R + TIMEOUT > R' .
-
----   ceq {REST  rttAck(O, O', R)} in time R'
----         |=
----       currentMsgExchange(O, O') = true  if R + TIMEOUT > R' .
-
-
----   op findMsgExists : Oid -> Prop [ctor] .
-
----   eq {REST findRtt(O)}
----         |=
----      findMsgExists(O) = true .
-
----   --- Superfluous message present somewhere in the system?
----   op superfluousMsg : -> Prop [ctor] .
-
----   ceq {< O : Node | rttValues : rttValue(O', R) ; RTT-VALS >   
----        rtt?(O', O, R')
----        REST}  in time R'' 
----         |= 
----       superfluousMsg  = true   if R' + TIMEOUT > R'' .
-
----   ceq {< O : Node | rttValues : rttValue(O', R) ; RTT-VALS >   
----        rttAck(O, O', R')
----        REST}  in time R'' 
----         |= 
----       superfluousMsg  = true   if R' + TIMEOUT > R'' .
-
-
----   op rttValueIs : Oid Oid Time -> Prop [ctor] .
-
----   ceq {REST  < O : Node | rttValues : rttValue(O', R) ; RTT-VALS >}
----         |=
----       rttValueIs(O,O', R)  = true   if  not O' in RTT-VALS .
-
----   op _in_ : Oid RttValues -> Bool .
----   eq O in noValue = false .
----   eq O in rttValue(O', R) ; RTT-VALS = (O == O') or O in RTT-VALS .
---- endtom)
-
-
-
---- Also take the initial state into account when model checking:
-
---- (tomod MODEL-CHECK-TEST-MANY-RTTS is
----   protecting TEST-MANY-RTTS .
----   including MODEL-CHECK-MANY-RTTS .
---- endtom)
-
-
---- No too large rtt values are ever stored. Due to the high degree of 
---- nondeterminism, it can only be checked up to time 9 on my machine.
---- The constant TIMEOUT should be redefined to 4 before 
---- executing the following spec:
-
----(mc initState |=t [] ~ badRttValue in time <= 9 .)
-
---- if there is no findRtt msg for n4, then either there is a recorded
---- rtt value for the pair n4, n3, or there is a current message exchange
---- going on to find such an rtt value:
-
-***(mc initState |=t
-      (~ findMsgExists(n4)) => 
-         [] (rttFound(n4, n3) \/ currentMsgExchange(n4, n3))
-      in time <= 9 .)
-
---- there is no superfluous message in the system:
-
-***(mc initState |=t [] ~ superfluousMsg in time <= 9 .)
-
---- stability of rtt values: once the rtt from n4 to n3 is found to be 
---- 2, then it will remain 2:
-
-***(mc initState |=t rttValueIs(n4, n3, 2) => [] rttValueIs(n4, n3, 2)
-      in time <= 9 .)

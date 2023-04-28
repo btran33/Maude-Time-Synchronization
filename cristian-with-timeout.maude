@@ -80,7 +80,7 @@ load real-time-maude.maude
   eq mte(NeC:NEConfiguration NeC':NEConfiguration) =
        min(mte(NeC:NEConfiguration), mte(NeC':NEConfiguration)) .
 
-  eq mte(M:Msg) = INF .                               --- msgs have no timeout limit
+
   eq mte(< OID : Client | LocalTimer : TI >) = TI .   --- client will always have a timeout TI
   eq mte(< OID : Server | LocalClock : T >) = INF .   --- treat server with no timeout limit
 
