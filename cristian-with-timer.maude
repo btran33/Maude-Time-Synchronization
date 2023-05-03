@@ -1,15 +1,35 @@
 --- Cristian Algorithm, featuring a simple 1-client, 1-server model
---- with round-trip time message(s) to consider 
+--- with round-trip time delayed message(s) to consider 
 --- (i.e when ack has not been received within a timeout)
 
 --- Introduces timer, where time will not increment when it expires (value is 0)
+--- which is applicable on delaying the messages and imposing a timeout on client
 
 load real-time-maude.maude
 
+(tomod DELAY-MSGS is 
+   protecting NAT-TIME-DOMAIN . 
+
+   --- remains the same
+  msg request : -> Msg .
+  msg timeRequest : Time -> Msg .
+  msg timeAck : Time Time -> Msg .
+
+  --- but introduce a supersort called DelayMSg
+  sort DelayMsg .
+  subsorts Msg < DelayMsg < NEMsgConfiguration .
+
+  --- with a constructor that decays to Msg when time is 0
+  op delay : Msg Time -> DelayMsg [ctor right id: 0] .
+
+endtom)
+
+
 (tomod CRISTIAN-WITH-TIMEOUT is
+  including DELAY-MSGS .
   protecting NAT-TIME-DOMAIN-WITH-INF .
 
-  ops TIMEOUT : -> Time .
+  ops TIMEOUT MIN-DELAY : -> Time .
 
   class Client | LocalClock : Time, LocalTimer : TimeInf .
   class Server | LocalClock : Time .
@@ -23,11 +43,11 @@ load real-time-maude.maude
   
   --- Start usual protocol, but also set the timer:
   rl [rttRequest] :
-     request  < OID : Client | LocalClock : T >  =>  < OID : Client | LocalTimer : TIMEOUT >  timeRequest(T) .
+     request  < OID : Client | LocalClock : T >  =>  < OID : Client | LocalTimer : TIMEOUT >  delay(timeRequest(T), MIN-DELAY) .
 
   --- Server read timeRequest and acknowledge like normal
   rl [rttAck] :
-     timeRequest(T)  < OID : Server | LocalClock : S >  =>  < OID : Server | >  timeAck(T, S) .
+     timeRequest(T)  < OID : Server | LocalClock : S >  =>  < OID : Server | >  delay(timeAck(T, S), MIN-DELAY) .
 
   --- Client react to the ack within TIMEOUT. Set client's local time and turn off resendTimer:
   crl [rttAckReact] :
@@ -54,7 +74,7 @@ load real-time-maude.maude
 
   --- Now, the tick rule must
   ---   increase all clocks (client and server)
-  ---   decrease all timers (client)
+  ---   decrease all timers (client and delayed messages)
   ---   must not advance time when client timer expires 
   crl [tick] : {C:Configuration}  =>  
                {delta(C:Configuration, T')} in time T'
@@ -73,6 +93,7 @@ load real-time-maude.maude
         < OID : Server | LocalClock : T plus T' >  .
 
   eq delta(M:Msg, T') = M:Msg .
+  eq delta(delay(M:Msg, T), T') = delay(M:Msg, T monus T') .
 
   --- MTE (maximal time elapse) finds the "next" time some instantaneous rule must be applied
   op mte : Configuration -> TimeInf [frozen (1)] .
@@ -80,9 +101,12 @@ load real-time-maude.maude
   eq mte(NeC:NEConfiguration NeC':NEConfiguration) =
        min(mte(NeC:NEConfiguration), mte(NeC':NEConfiguration)) .
 
+  eq mte(delay(M:Msg, T)) = INF .                     --- no stopping necessary (since delayed msg's
+                                                      --- timer should "auto-decay" to msg at 0 due to identity)
 
   eq mte(< OID : Client | LocalTimer : TI >) = TI .   --- client will always have a timeout TI
-  eq mte(< OID : Server | LocalClock : T >) = INF .   --- treat server with no timeout limit
+  eq mte(< OID : Server | LocalClock : T >) = INF .   --- treat server with no timeout
+
 
 endtom)
 
@@ -91,10 +115,12 @@ endtom)
    including CRISTIAN-WITH-TIMEOUT .
 
    eq TIMEOUT = 10 .
+   eq MIN-DELAY = 2 .
+
    ops client server : -> Oid [ctor] .
 
    op initState : -> GlobalSystem .
-   eq initState = {request 
+   eq initState = {request
                   < client : Client | LocalClock : 0, LocalTimer : INF >  
                   < server : Server | LocalClock : 4 >} .
 endtom)
@@ -107,4 +133,10 @@ endtom)
 *** (tfrew initState in time <= 2 .)
 
 --- We should be able to have a local clock = 5 where t > 2 and ack hasn't arrive:
-*** (tsearch [1] initState =>* {<  client : Client | LocalClock : 5, LocalTimer : 5 > REST:Configuration} in time > 2 .)
+*** (tsearch [1] initState =>* {< client : Client | LocalClock : 10, LocalTimer : 10 > REST:Configuration} in time < 11 .)
+*** (tsearch [1] initState =>* {< client : Client | LocalClock : 5, LocalTimer : 5 > REST:Configuration} in time > 2 .)
+
+--- But we shouldn't be able to have matching clock value at max(client, server) + (MIN-DELAY * 2), less than (MIN-DELAY * 2)
+--- i.e. the round-trip messages affecting the client less than the minimum message delay on both way
+*** (tsearch [1] initState =>* {< client : Client | LocalClock : 8 >  < server : Server | LocalClock : 8 >} in time < 4 .)
+
