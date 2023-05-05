@@ -23,6 +23,11 @@ load real-time-maude.maude
   op none : -> OidSet [ctor] .
   op _;_ : OidSet OidSet -> OidSet [ctor assoc comm id: none] .
 
+  --- sort TimeSet .
+  --- subsort Time < TimeSet .
+  --- op noTime : -> TimeSet [ctor] .
+  --- op _;_ : TimeSet TimeSet -> TimeSet [ctor assoc comm id: noTime] .
+
   --- Need a datatype to store each client's time value on server for two purposes: 
   --- 1. for each "pending" rtt request on server, we need a timer value
   --- 2. to store the rtt time value for computation
@@ -36,7 +41,7 @@ load real-time-maude.maude
   op noTimer : -> Timers [ctor] .
   op _;_ : Timers Timers -> Timers [ctor assoc comm id: noTimer] .
 
-  var T : Time .
+  var T T' : Time .
   var OID : Oid .
   var OSet : OidSet .
 
@@ -63,10 +68,12 @@ load real-time-maude.maude
   op len : RttValues -> Time .
   eq len(noValue) = 0 .
   eq len(RTT ; RTTs) = 1 plus len(RTTs) .
+
+  op sumRtt : RttValues -> Time .
+  eq sumRtt(noValue) = 0 .
+  eq sumRtt(rttValue(OID, T, T') ; RTTs) = T' plus sumRtt(RTTs) .
   
 endtom)
-
-
 
 
 (tomod MSGS is
@@ -84,6 +91,9 @@ endtom)
   msg timeRequest : Oid Oid Time -> Msg .
   msg timeAck : Oid Oid Time Time -> Msg .
 
+  --- offset msg, with true/false determining if negative/positive
+  msg offsetRequest : Oid Time Bool -> Msg .
+
   sort DelayMsg .
   subsorts Msg < DelayMsg < NEMsgConfiguration .
   --- The delay operators (wrapper) on messages:
@@ -94,24 +104,34 @@ endtom)
   --- usage: multiDelayRequest(client_group, server, server_clock_value, min_trans_delay)
   msg multiDelayRequest : OidSet Oid Time Time -> Configuration .
 
-  vars OClient OServer : Oid .  var OSet : OidSet .  vars S DLY : Time .
+  vars OClient OServer : Oid .  var OSet : OidSet .  vars S DLY T T' : Time . var RTTSet : RttValues .
 
   eq multiDelayRequest(none, OServer, S, DLY) = none .
   eq multiDelayRequest(OClient ; OSet, OServer, S, DLY) = 
         delay(timeRequest(OClient, OServer, S), DLY) multiDelayRequest(OSet, OServer, S, DLY) .
+
+  --- usage: multiOffsetRequest(client_group, server, rtt_clients, avg_time, min_trans_delay)
+  msg multiOffsetRequest : OidSet Oid RttValues Time Time -> Configuration .
+  eq multiOffsetRequest(none, OServer, noValue, S, DLY) = none .
+  eq multiOffsetRequest(OClient ; OSet, OServer, rttValue(OClient, T, T') ; RTTSet, S, DLY) =
+        delay(offsetRequest(OClient, S monus2 T', S lt T'), DLY) multiOffsetRequest(OSet, OServer, RTTSet, S, DLY) .
+
 endtom)
 
 
 (tomod BERKELEY is
   including MSGS .
   including NAT-TIME-DOMAIN-WITH-INF .  --- Inf OK for mte and delta
+  pr BOOL .
 
-  ops TIMEOUT MIN-DELAY : -> Time .   
+  ops TIMEOUT MIN-DELAY NUM-CLIENT : -> Time .
 
   class Server | LocalClock : Time, 
                  Clients : OidSet, 
                  LocalTimers : Timers, 
-                 rttValues : RttValues .
+                 rttValues : RttValues,
+                 avgClientServerTime : Time,
+                 avgFound : Bool .
 
   class Client | LocalClock : Time .
 
@@ -120,6 +140,7 @@ endtom)
   vars T T' T'' C : Time .
   var TIMERS : Timers . 
   var RTTVALS : RttValues .
+  vars AvgFound Negative : Bool .
 
   --- Start: send a timeRequest message, with approrpiate min-delay, 
   --- to all clients and initialize timeout on all timers
@@ -150,6 +171,7 @@ endtom)
                               LocalTimers : TIMERS > 
       if T' monus T < TIMEOUT .
 
+
   --- Reception of an too old message which is just discard:
   crl [discardOldRttAck] :
       timeAck(OServer, OClient, T, C)  < OServer : Server | LocalClock : T' >  
@@ -165,6 +187,46 @@ endtom)
         < OServer : Server | LocalTimers : TIMERS ; timer(OClient, TIMEOUT) >
         delay(timeRequest(OClient, OServer, T), MIN-DELAY) .
 
+
+
+  --- Calculate the averaged time of all client + server time, set found to TRUE:
+  crl [rttAvgClientServer] :
+      < OServer : Server | LocalClock : T, rttValues : RTTVALS, LocalTimers : TIMERS, avgFound : AvgFound >
+       =>
+         < OServer : Server | rttValues : RTTVALS, LocalTimers : TIMERS,
+                              avgClientServerTime : (sumRtt(RTTVALS) plus T) div (NUM-CLIENT + 1),
+                              avgFound : true > 
+
+      if (len(RTTVALS) == NUM-CLIENT) /\ (AvgFound == false).
+
+    
+  --- Start 2: send a offsetRequest message, with approrpiate min-delay, 
+  --- to all clients for them to adjust their time. For some reason, server
+  --- local clock 
+  crl [rttRequest2] : 
+     < OServer : Server | Clients : OSet, LocalClock : T, rttValues : RTTVALS, 
+                          LocalTimers : TIMERS, avgClientServerTime : T', avgFound : AvgFound > 
+      => 
+        < OServer : Server | LocalClock : T' plus 2, rttValues : noValue, avgFound : false >
+        multiOffsetRequest(OSet, OServer, RTTVALS, T', MIN-DELAY) 
+
+        if (len(RTTVALS) == NUM-CLIENT) /\ (AvgFound == true) .
+
+  --- Client read offsetRequest and set their offset to clock
+  crl [rttAck2_true] :
+     offsetRequest(OClient, T, Negative)  
+     < OClient : Client | LocalClock : C >
+      => 
+        < OClient : Client | LocalClock : C monus T > 
+        if Negative == true .
+  crl [rttAck2_false] :
+     offsetRequest(OClient, T, Negative)  
+     < OClient : Client | LocalClock : C >
+      => 
+        < OClient : Client | LocalClock : C plus T > 
+        if Negative == false .
+
+
   --- Now, the tick rule must
   ---   increase all clocks (client and server)
   ---   decrease all timers (server)
@@ -174,49 +236,15 @@ endtom)
   crl [tick] : {C:Configuration}  =>  
                {delta(C:Configuration, T')} in time T'
                if T' <= mte(C:Configuration) [nonexec] . --- MTE used as bound for tick
-     
+
   --- Delta models the effect of time elapse on a system
-  --- op delta : Configuration Time -> Configuration [frozen (1)] .
-  --- eq delta(none, T') = none .
-  --- eq delta(NeC:NEConfiguration NeC':NEConfiguration, T') =
-  ---      delta(NeC:NEConfiguration, T') delta(NeC':NEConfiguration, T') .
-
-  --- eq delta(< OServer : Server | LocalClock : T, LocalTimers : TIMERS >, T') =
-  ---       < OServer : Server | LocalClock : T plus T',  LocalTimers : delta(TIMERS, T') > .
-
-  --- eq delta(< OClient : Client | LocalClock : T >, T') =
-  ---       < OClient : Client | LocalClock : T plus T' > .
-        
-  --- eq delta(delay(M:Msg, T), T') = delay(M:Msg, T monus T') .
-  --- eq delta(M:Msg, T') = M:Msg . 
-
-  --- op delta : Timers Time -> Timers .
-  --- eq delta(noTimer, T') = noTimer .
-  --- eq delta(timer(OClient, T) ; TIMERS, T') = 
-  ---      timer(OClient, T monus T') ; delta(TIMERS, T') .
-
-  --- --- MTE (maximal time elapse) finds the "next" time some instantaneous rule must be applied
-  --- op mte : Configuration -> TimeInf [frozen (1)] .
-  --- eq mte(none) = INF .
-  --- eq mte(NeC:NEConfiguration NeC':NEConfiguration) =
-  ---      min(mte(NeC:NEConfiguration), mte(NeC':NEConfiguration)) .
-       
-  --- eq mte(< OServer : Server | LocalTimers : TIMERS >) = mte(TIMERS) .
-  --- eq mte(< OClient : Client | >) = INF .
-  
-  --- eq mte(DM:DelayMsg) = INF .       --- no stopping necessary when message ripe!
-  --- eq mte(M:Msg) = INF .
-
-  --- op mte : Timers -> TimeInf .
-  --- eq mte(noTimer) = INF .
-  --- eq mte(timer(OClient, T) ; TIMERS) = min(T, mte(TIMERS)) .
-
   op delta : Configuration Time -> Configuration [frozen (1)] .
   eq delta(none, T) = none .
   eq delta(NeC:NEConfiguration NeC':NEConfiguration, T) =
        delta(NeC:NEConfiguration, T) delta(NeC':NEConfiguration, T) .
   eq delta(< OServer : Server | LocalClock : T, LocalTimers : TIMERS >, T') =
         < OServer : Server | LocalClock : T + T',  LocalTimers : delta(TIMERS, T') > .
+
   eq delta(< OClient : Client | LocalClock : T >, T') =
         < OClient : Client | LocalClock : T plus T' > .
 
@@ -227,6 +255,7 @@ endtom)
   eq delta(timer(OClient, T) ; TIMERS, T') = 
        timer(OClient, T monus T') ; delta(TIMERS, T') .
 
+  --- MTE (maximal time elapse) finds the "next" time some instantaneous rule must be applied
   op mte : Configuration -> TimeInf [frozen (1)] .
   eq mte(none) = INF .
   eq mte(NeC:NEConfiguration NeC':NEConfiguration) =
@@ -249,19 +278,24 @@ endtom)
 (tomod DISCRETE-BERKELEY is including BERKELEY .
   ops server c1 c2 c3 : -> Oid [ctor] .  --- Names
 
-  eq TIMEOUT = 4 .    eq MIN-DELAY = 1 .
+  eq TIMEOUT = 10 .    eq MIN-DELAY = 1 .
+  eq NUM-CLIENT = 3 .
 
   op initState : -> GlobalSystem .
   eq initState =
       {request(server)
-       < server : Server | LocalClock : 5,
+       < server : Server | LocalClock : 1,
                            Clients : c1 ; c2 ; c3,
                            LocalTimers : noTimer,
-                           rttValues : noValue >
+                           rttValues : noValue,
+                           avgClientServerTime : 0,
+                           avgFound : false >
        < c1 : Client | LocalClock : 2 >
        < c2 : Client | LocalClock : 3 >
-       < c3 : Client | LocalClock : 1 >} .
+       < c3 : Client | LocalClock : 10 >} .
 endtom)
+
+(set tick def 1 .)
 
 --- (tfrew initState in time < 10 .)
 

@@ -54,7 +54,7 @@
 
  
 
-***(   Main changes from Real-Time Maude 2.1 to Real-Time Maude 2.2:
+&&***(   Main changes from Real-Time Maude 2.1 to Real-Time Maude 2.2:
 
        1. As before, variables occurring in the conditions
           on the patterns in timed and untimed search, find
@@ -13608,6 +13608,7 @@ fmod TIME is
    ops zero : -> Time .
    op _plus_ : Time Time -> Time [assoc comm prec 33 gather (E e)] .
    op _monus_ : Time Time -> Time [prec 33 gather (E e)] .
+   op _monus2_ : Time Time -> Time [prec 33 gather (E e)] .
    op _div_ : Time Time -> Time [prec 31 gather (E e)] .
    op _le_ : Time Time -> Bool [prec 37] .
    op _lt_ : Time Time -> Bool [prec 37] .
@@ -13643,6 +13644,7 @@ fmod TIME-INF is
   op INF : -> TimeInf .
   op _plus_ : TimeInf TimeInf -> TimeInf [ditto] .
   op _monus_ : TimeInf Time -> TimeInf [ditto] .
+  op _monus2_ : TimeInf Time -> TimeInf [ditto] .
   op _div_ : TimeInf TimeInf -> TimeInf [ditto] .
   op _le_ : TimeInf TimeInf -> Bool [prec 37] .
   op _lt_ : TimeInf TimeInf -> Bool [prec 37] .
@@ -13654,6 +13656,7 @@ fmod TIME-INF is
 
   eq INF plus TI = INF .
   eq INF monus R = INF .
+  eq INF monus2 R = INF .
   eq INF div TI = INF .
   eq TI le INF = true .
   eq INF le R = false .
@@ -13705,6 +13708,7 @@ fmod NAT-TIME-DOMAIN is
   eq zero = 0 .
   eq N plus N' = N + N' .
   eq N monus N' = if N > N' then sd(N, N') else 0 fi .
+  eq N monus2 N' = if N > N' then sd(N, N') else sd(N', N) fi .
   eq N div N' = N quo N' .
   eq N lt N' = N < N' .
 endfm
@@ -13767,6 +13771,8 @@ fmod POSRAT-TIME-DOMAIN is
   eq zero = 0 .
   eq R plus R' = R + R' .
   eq R monus R' = if R > R' then R - R' else 0 fi .
+  eq R monus2 R' = if R > R' then R - R' else R' - R fi .
+
   eq R div R' = R quo R' .
   eq R lt R' = R < R' .
 endfm
