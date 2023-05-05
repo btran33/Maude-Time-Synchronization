@@ -202,7 +202,7 @@ endtom)
     
   --- Start 2: send a offsetRequest message, with approrpiate min-delay, 
   --- to all clients for them to adjust their time. For some reason, server
-  --- local clock 
+  --- local clock doesn't increment its time for 2 clock cycle, hence +2
   crl [rttRequest2] : 
      < OServer : Server | Clients : OSet, LocalClock : T, rttValues : RTTVALS, 
                           LocalTimers : TIMERS, avgClientServerTime : T', avgFound : AvgFound > 
@@ -298,18 +298,3 @@ endtom)
 (set tick def 1 .)
 
 --- (tfrew initState in time < 10 .)
-
---- search for bad state, where a rtt value outside of
---- desired range is found:
-
-
-*** search for BAD rtt values:
-***(tsearch [1] initState =>* 
-               {C:Configuration 
-                < O:Oid : Node | rttValues : RTTVALS:RttValues ; 
-                                             rttValue(O':Oid, RTTVAL:Time) >}
-                  such that RTTVAL:Time < (2 * MIN-DELAY)  
-                            or RTTVAL:Time >= TIMEOUT
-                     in time <= 7 .)
-
-
