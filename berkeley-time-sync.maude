@@ -1,8 +1,7 @@
 --- Berkeley Algorithm, featuring 1-server, multi-client model
 --- with timeout and message delays
 
---- Constraints: no periodic poll, and offset between client and 
---- averaged time must be non-negative due to Time being monotonically increasing
+--- Constraints: no periodic poll
 
 --- With multiple clients, a server will need to know the rtt of all
 --- its clients to compute each client's offset
